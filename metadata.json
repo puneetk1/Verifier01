@@ -1,0 +1,5 @@
+{
+  "name": "AegisAI - Automated Pentesting Platform",
+  "description": "An enterprise-grade AI-enabled automated penetration testing suite based on the Service Blueprint. Features multi-agent orchestration, local LLM reasoning (Ollama), and a full vulnerability management lifecycle via DefectDojo.",
+  "requestFramePermissions": []
+}

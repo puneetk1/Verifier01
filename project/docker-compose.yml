@@ -1,0 +1,130 @@
+
+version: '3.8'
+
+services:
+  # --- AI Reasoning Layer ---
+  ollama:
+    image: ollama/ollama:latest
+    container_name: aegis_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # --- Agent Orchestrator ---
+  orchestrator:
+    build: 
+      context: ./orchestrator
+    container_name: aegis_orchestrator
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - DD_API_TOKEN=${DD_API_TOKEN}
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_TASK_TIMEOUT=900
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      - ollama
+      - redis
+      - defectdojo
+    networks:
+      - pentest-net
+      - mgmt-net
+
+  # --- Execution Sandboxes (Ephemeral) ---
+  sandbox-manager:
+    image: aegis/sandbox-manager:latest
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "ls", "/var/run/docker.sock"]
+      interval: 60s
+      timeout: 2s
+      retries: 2
+    networks:
+      - pentest-net
+
+  # --- Vulnerability Management ---
+  defectdojo:
+    image: defectdojo/defectdojo-django:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - DD_DATABASE_URL=postgres://dd:dd@db:5432/defectdojo
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      - db
+      - redis
+    networks:
+      - mgmt-net
+
+  db:
+    image: postgres:16
+    volumes:
+      - dd_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=dd
+      - POSTGRES_USER=dd
+      - POSTGRES_DB=defectdojo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dd -d defectdojo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mgmt-net
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mgmt-net
+
+  # --- UI Portal ---
+  portal:
+    build: ./portal
+    ports:
+      - "80:80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      - orchestrator
+    networks:
+      - mgmt-net
+
+networks:
+  pentest-net:
+    internal: false # Accessible to targets
+  mgmt-net:
+    internal: true # Isolated backend traffic
+
+volumes:
+  ollama_data:
+  dd_data:
